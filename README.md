@@ -40,7 +40,11 @@ machine, into a staging root (`DESTDIR`, `/stage` in CI): the gershwin
 filesystem layout, the SYSTEM domain, the ng-gnu-gnu library combo, ICU,
 Bonjour through mDNSResponder, libs-back's X11 server with cairo, and
 libdispatch and the blocks runtime from NextBSD's base system, linked through
-`-ldispatch`/`-lBlocksRuntime` links in `/Developer/Link`.
+`-ldispatch`/`-lBlocksRuntime` links in `/Developer/Link`. The staged install
+ships those two links too, because the installed makefiles link every app with
+`-L/Developer/Link -ldispatch -lBlocksRuntime`; without them, building an app
+on NextBSD (Software.app, or `gmake` by hand) fails with `unable to find
+library -ldispatch`.
 
 | File | What it is |
 |---|---|
