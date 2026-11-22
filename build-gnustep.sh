@@ -10,7 +10,8 @@
 # on a machine: the gershwin filesystem layout, the SYSTEM domain, the
 # ng-gnu-gnu library combo, libdispatch and the blocks runtime from NextBSD's
 # base system (linked through -ldispatch and -lBlocksRuntime links in
-# /Developer/Link), ICU, Bonjour through mDNSResponder, and libs-back's X11
+# /Developer/Link, which the staged install ships too, so apps built on the
+# machine link), ICU, Bonjour through mDNSResponder, and libs-back's X11
 # server with cairo.
 #
 # How it cross-builds, without running anything built for the target:
@@ -373,6 +374,14 @@ for lib in $LIBS; do
 done
 total1=$(date +%s)
 printf '%s\t%s\t%d\n' "$T" total "$((total1 - total0))" >> "$TIMES"
+# The installed makefiles link apps with -L/Developer/Link -ldispatch
+# -lBlocksRuntime (base.make, config.make), so the target needs the same two
+# links the sysroot got in setup; they ship here, in NextBSD-gnustep. Link
+# time only: a program records libsystem_dispatch.so / libsystem_blocks.so,
+# which rtld finds in /usr/lib/system.
+mkdir -p "$DESTDIR/Developer/Link"
+ln -sf ../../usr/lib/system/libsystem_dispatch.so "$DESTDIR/Developer/Link/libdispatch.so"
+ln -sf ../../usr/lib/system/libsystem_blocks.so "$DESTDIR/Developer/Link/libBlocksRuntime.so"
 check_stage
 comp "done in $((total1 - total0))s"
 column -t "$TIMES" 2>/dev/null || cat "$TIMES"
