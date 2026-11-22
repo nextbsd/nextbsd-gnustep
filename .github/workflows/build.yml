@@ -1,0 +1,203 @@
+name: Build NextBSD GNUstep (cross)
+
+# Cross-builds NextBSD's GNUstep core (tools-make, libobjc2, libs-base,
+# libs-corebase, libs-gui, libs-back, libs-av; nextbsd/nextbsd#674) for amd64
+# and arm64 on the x86_64 runner, inside the per-arch nextbsd-toolchain
+# container, against a NextBSD sysroot made of the `continuous` artifacts of
+# nextbsd-freebsd-compat, nextbsd-userland, nextbsd-displayserver-support,
+# nextbsd-xlibs and nextbsd-gnustep-support. Nothing built for NextBSD runs
+# here: configure checks that would run a program are answered by
+# cross/nextbsd-<arch>.site (nextbsd/nextbsd#673).
+#
+# Per arch it produces:
+#   nextbsd-gnustep-<arch>.tar.gz      the staged install, rooted at /, for
+#                                      nextbsd-pkg's NextBSD-gnustep;
+#   nextbsd-gnustep-sdk-<arch>.tar.gz  the GNUstep SDK (sysroot + GNUstep +
+#                                      gnustep-make configuration + compiler);
+#   gnustep-build-report-<arch>        build times, BUILD-INFO and the files
+#                                      configure generated.
+# A second job unpacks the SDK in a fresh container and cross-builds
+# apps-terminal with it alone.
+#
+# Builds run on pull requests, pushes to main and by hand; a push to main or a
+# manual run from main also publishes the tarballs to the `continuous`
+# release. Nothing is dispatched to other repos.
+
+on:
+  push:
+    branches: [main]
+    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
+  pull_request:
+    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
+  workflow_dispatch:
+    inputs:
+      fbsd_sha:
+        description: 'Pinned FreeBSD SHA for the toolchain image tag (blank = latest)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: gnustep (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    container:
+      image: ghcr.io/nextbsd/nextbsd-toolchain:${{ matrix.arch }}-${{ inputs.fbsd_sha && format('fbsd-{0}', inputs.fbsd_sha) || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # plmerge and pl2link for the build host: gnustep-make runs them on
+      # bundles and apps, and the ones being built are NextBSD programs.
+      - name: Install build-host tools
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends gnustep-base-runtime
+          command -v plmerge pl2link
+
+      # The NextBSD sysroot, in the order the repos build. All public reads.
+      - name: Stage the NextBSD sysroot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          A: ${{ matrix.arch }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/sysroot" /tmp/dl
+          for r in nextbsd-freebsd-compat:nextbsd-base nextbsd-userland:nextbsd-userland \
+                   nextbsd-displayserver-support:nextbsd-displayserver-support \
+                   nextbsd-xlibs:nextbsd-xlibs nextbsd-gnustep-support:nextbsd-gnustep-support; do
+            repo=${r%%:*}; asset=${r#*:}-$A.tar.gz
+            gh release download continuous --repo "nextbsd/$repo" --pattern "$asset" --dir /tmp/dl --clobber
+            tar -C "$GITHUB_WORKSPACE/sysroot" -xzf "/tmp/dl/$asset"
+            echo "$repo $(gh release view continuous --repo "nextbsd/$repo" --json assets -q ".assets[] | select(.name == \"$asset\") | .updatedAt")" >> /tmp/dl/SYSROOT-INFO
+          done
+          cat /tmp/dl/SYSROOT-INFO
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-${{ matrix.arch }}-
+
+      - name: Cross-build the GNUstep core into /stage
+        env:
+          T: ${{ matrix.arch }}
+          DESTDIR: /stage
+          CCACHE: '1'
+        run: |
+          export SYSROOT="$GITHUB_WORKSPACE/sysroot"
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" CCACHE_MAXSIZE=2G
+          ccache -z
+          ./build-gnustep.sh
+          ccache -s
+
+      - name: Assemble the GNUstep SDK
+        env:
+          T: ${{ matrix.arch }}
+          DESTDIR: /stage
+        run: |
+          export SYSROOT="$GITHUB_WORKSPACE/sysroot"
+          ./make-sdk.sh
+
+      - name: Pack
+        env:
+          T: ${{ matrix.arch }}
+        run: |
+          cp .build/BUILD-INFO-$T /stage/System/Library/Preferences/nextbsd-gnustep-BUILD-INFO 2>/dev/null || true
+          tar -C /stage -czf ".build/out/nextbsd-gnustep-$T.tar.gz" .
+          mkdir -p ".build/report-$T"
+          cp -R ".build/configs-$T" ".build/times-$T.tsv" ".build/BUILD-INFO-$T" /tmp/dl/SYSROOT-INFO ".build/report-$T/"
+          ls -la .build/out
+          {
+            echo "### GNUstep cross-build, $T"
+            echo
+            echo "| library | seconds |"
+            echo "|---|---:|"
+            awk -F'\t' '{ print "| " $2 " | " $3 " |" }' ".build/times-$T.tsv"
+            echo
+            echo "Sources:"
+            echo
+            awk -F'\t' '{ print "- " $1 " " $3 " " substr($4, 1, 12) }' ".build/BUILD-INFO-$T"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nextbsd-gnustep-${{ matrix.arch }}
+          path: .build/out/nextbsd-gnustep-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nextbsd-gnustep-sdk-${{ matrix.arch }}
+          path: .build/out/nextbsd-gnustep-sdk-${{ matrix.arch }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gnustep-build-report-${{ matrix.arch }}
+          path: .build/report-${{ matrix.arch }}
+          if-no-files-found: ignore
+
+  # The SDK on its own: a fresh container with only the SDK tarball
+  # cross-builds an app.
+  sdk-app:
+    name: SDK cross-builds Terminal (${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    container:
+      image: ghcr.io/nextbsd/nextbsd-toolchain:${{ matrix.arch }}-${{ inputs.fbsd_sha && format('fbsd-{0}', inputs.fbsd_sha) || 'latest' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build-host tools
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends gnustep-base-runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: nextbsd-gnustep-sdk-${{ matrix.arch }}
+          path: /tmp/sdk
+      - name: Cross-build apps-terminal with the SDK
+        env:
+          T: ${{ matrix.arch }}
+          SDK_TARBALL: /tmp/sdk/nextbsd-gnustep-sdk-${{ matrix.arch }}.tar.gz
+        run: |
+          ./test-sdk-app.sh
+          {
+            echo "### SDK test, ${{ matrix.arch }}"
+            echo
+            echo "apps-terminal cross-built with the SDK alone in $(cut -f3 .build/out/sdk-test-time-$T.tsv)s (unpacking included)."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-test-app-${{ matrix.arch }}
+          path: .build/out/sdk-test-app-${{ matrix.arch }}.tar.gz
+
+  publish:
+    needs: [build, sdk-app]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: nextbsd-gnustep-*
+      - name: Gather artifacts
+        run: |
+          mkdir -p out
+          find artifacts -name 'nextbsd-gnustep-*.tar.gz' -exec cp {} out/ \;
+          ls -la out/
+      - name: Publish to continuous release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Continuous GNUstep build
+          prerelease: true
+          fail_on_unmatched_files: true
+          files: out/*.tar.gz

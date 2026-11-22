@@ -1,0 +1,95 @@
+# CONFIG_SITE for cross-building GNUstep for NextBSD arm64
+# (aarch64-nextbsd-freebsd).
+#
+# Every configure that build-gnustep.sh runs for arm64 sources this file
+# through CONFIG_SITE, and libs-base also reads it as its
+# --with-cross-compilation-info file (libs-base's own cross.config format: the
+# cross_* variables). It holds the answers to the configure checks that would
+# have to run a program on NextBSD, which a cross build can't do.
+#
+# "derived" means not yet read from a native arm64 run: the Raspberry Pi 500+
+# was not running NextBSD when these were collected (2026-11-22). Each derived
+# answer is the amd64 native answer (nextbsd-amd64.site) where the check tests
+# the C library, kernel or Objective-C runtime, which are the same sources on
+# both architectures, or the documented arm64 behaviour where it tests the CPU
+# (NEED_WORD_ALIGNMENT). Replace "derived" with "verified" once a native
+# configure on NextBSD arm64 confirms them.
+
+# ---- tools-make -------------------------------------------------------------
+
+# "whether objc has thread support": amd64 native "no". tools-make is configured
+# before libobjc2 exists, so the test program can't link and every variant
+# fails; config.make gets an empty objc_threaded. (derived)
+# Needs nextbsd/tools-make's cacheable check; the stock check ignores it and
+# assumes -pthread when cross-compiling.
+gs_cv_objc_threaded=
+
+# "for bash": amd64 native "no" (NextBSD has no bash), so gnustep-tests gets
+# #!/bin/sh. Without this a cross build would record the build host's bash.
+# (derived)
+ac_cv_path_SHELLPROG=
+# "for test": amd64 native /bin/test. (derived)
+ac_cv_path_TESTPROG=/bin/test
+# "for gawk/mawk/nawk": amd64 native nawk. (derived)
+ac_cv_prog_AWK=nawk
+
+# ---- libs-base: cache variables -----------------------------------------------
+
+# "loading of constructor functions": amd64 native yes; the cross default is no.
+# (derived: CON_AUTOLOAD 1)
+objc_cv_con_autoload=yes
+# "for gettid()": amd64 native no. (derived)
+ac_cv_gettid=no
+# "whether setpgrp requires zero arguments": amd64 native yes. (derived:
+# SETPGRP_VOID 1)
+ac_cv_func_setpgrp_void=yes
+
+# ---- libs-base: cross_* answers (its cross.config format) -------------------
+
+# "whether SO_REUSEADDR is broken": amd64 native no (1 = works). (derived)
+cross_reuseaddr_ok=1
+# "whether objc really works": amd64 native yes. (derived)
+cross_gs_cv_objc_works=yes
+# "if the compiler supports -fconstant-string-class": amd64 native yes. (derived)
+cross_gs_cv_objc_compiler_supports_constant_string_class=yes
+# "if +load method is executed before main": amd64 native yes. (derived:
+# HAVE_LOAD_METHOD 1)
+cross_gs_cv_objc_load_method_worked=yes
+# ObjC2 runtime (libobjc2): amd64 native OBJC2RUNTIME=1 in config.mak. (derived)
+cross_objc2_runtime=1
+# "for non-fragile-abi support": amd64 native yes. (derived)
+cross_non_fragile=yes
+# "for _objc_unexpected_exception in runtime": amd64 native yes. (derived:
+# HAVE_UNEXPECTED 1)
+cross_have_unexpected=yes
+# "for thread-safe +initialize in runtime": amd64 native yes. (derived:
+# HAVE_INITIALIZE 1)
+cross_safe_initialize=yes
+# "if poll supports devices": amd64 native yes. (derived: HAVE_POLL_F 1)
+cross_have_poll=yes
+# vsprintf/vasprintf return the length: amd64 native 1 and 1. (derived)
+cross_VSPRINTF_RETURNS_LENGTH=1
+cross_VASPRINTF_RETURNS_LENGTH=1
+# "short/int needs to be word aligned": no. AArch64 allows unaligned
+# loads and stores of normal memory, and FreeBSD runs userland with alignment
+# checking off (SCTLR_EL1.A = 0). (derived)
+cross_NEED_WORD_ALIGNMENT=0
+# register_printf_function works, with wide characters: amd64 native 1 and 1
+# (FreeBSD libc's xprintf). (derived: HAVE_REGISTER_PRINTF_FUNCTION 1,
+# HAVE_WIDE_PRINTF_FUNCTION 1)
+cross_working_register_printf=1
+cross_wide_register_printf=1
+# "program_invocation_name in C Library": amd64 native no. (derived)
+cross_gs_cv_program_invocation_name_worked=no
+# "/proc/$$/cmdline terminated by nul": amd64 native no. (derived)
+cross_CMDLINE_TERMINATED=0
+# "if we can access kernel memory": amd64 native no. (derived)
+cross_have_kvm_env=0
+# "FFI library usage": amd64 native libffi. (derived: USE_LIBFFI 1)
+cross_ffi_ok=yes
+# iconv: amd64 native "yes, in libc". (derived: HAVE_ICONV 1)
+cross_found_iconv_libc=yes
+cross_found_iconv_liconv=no
+cross_found_iconv_lgiconv=no
+# Unused by libs-base's configure today; kept as in its cross.config.
+cross_utf8literal_ok=no

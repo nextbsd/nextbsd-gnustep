@@ -1,0 +1,54 @@
+#!/bin/sh
+# nextbsd-cc: the NextBSD cross compiler, as `clang` and `clang++`.
+#
+# build-gnustep.sh and the GNUstep SDK put links named clang and clang++ to
+# this script first on PATH, so GNUstep's configure scripts and gnustep-make
+# record plain "clang" and "clang++", as a native NextBSD build does, while
+# every compile and link runs the toolchain image's clang for NextBSD against
+# the sysroot.
+#
+# The flags GNUstep records and passes are the native ones (-I/usr/include,
+# -L/usr/lib/system, -L/Developer/Link, the pkg-config output of the
+# sysroot's .pc files ...). This script points the ones that name the target's
+# /usr, /lib or /Developer into the sysroot, so nothing from the build host's
+# /usr is ever searched, and adds what NextBSD's native build gets from its
+# environment (CPATH=/usr/X11/include, LIBRARY_PATH=/usr/X11/lib:/Developer/Link).
+# /System is not rewritten: GNUstep's configure scripts test for files there,
+# so the build host's /System must be the GNUstep tree (a link to the staging
+# root, or to the SDK's System).
+#
+# Environment:
+#   NEXTBSD_SYSROOT       the NextBSD sysroot (or the SDK root)    (required)
+#   NEXTBSD_TARGET        clang target, e.g. aarch64-unknown-freebsd (required)
+#   NEXTBSD_CLANG_BINDIR  the real clang's directory (default: $CROSS_BINDIR,
+#                         then /usr/lib/llvm-19/bin)
+#   NEXTBSD_CCACHE        non-empty: run the compiler through ccache
+
+s=${NEXTBSD_SYSROOT:?nextbsd-cc: set NEXTBSD_SYSROOT}
+t=${NEXTBSD_TARGET:?nextbsd-cc: set NEXTBSD_TARGET}
+bindir=${NEXTBSD_CLANG_BINDIR:-${CROSS_BINDIR:-/usr/lib/llvm-19/bin}}
+
+case ${0##*/} in
+    *++) drv=clang++ ;;
+    *)   drv=clang ;;
+esac
+
+n=$#
+for a do
+    case $a in
+        -I/usr/*|-I/Developer/*)
+            a=-I$s${a#-I} ;;
+        -L/usr/*|-L/lib|-L/lib/*|-L/Developer/*)
+            a=-L$s${a#-L} ;;
+        # Libraries named by absolute path (CMake does this).
+        /usr/lib/*.so|/usr/lib/*.so.*|/usr/lib/*.a|/lib/*.so|/lib/*.so.*)
+            a=$s$a ;;
+    esac
+    set -- "$@" "$a"
+done
+shift "$n"
+
+exec ${NEXTBSD_CCACHE:+ccache} "$bindir/$drv" \
+    --target="$t" --sysroot="$s" -fuse-ld=lld -Qunused-arguments \
+    "$@" \
+    -I"$s/usr/X11/include" -L"$s/usr/X11/lib" -L"$s/Developer/Link"
