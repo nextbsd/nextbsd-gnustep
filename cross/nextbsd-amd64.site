@@ -1,0 +1,91 @@
+# CONFIG_SITE for cross-building GNUstep for NextBSD amd64
+# (x86_64-nextbsd-freebsd).
+#
+# Every configure that build-gnustep.sh runs for amd64 sources this file
+# through CONFIG_SITE, and libs-base also reads it as its
+# --with-cross-compilation-info file (libs-base's own cross.config format: the
+# cross_* variables). It holds the answers to the configure checks that would
+# have to run a program on NextBSD, which a cross build can't do.
+#
+# Each answer is what configure found when it ran the check natively on
+# NextBSD amd64 (the XPS 13 9320: /Developer/Sources/*/config.log and the
+# generated config.h, from pkgdemon/nextbsd-gnustep's
+# build-core-libs-nextbsd-dispatch.sh, 2026-11-20). "verified" means read from
+# that native run.
+
+# ---- tools-make -------------------------------------------------------------
+
+# "whether objc has thread support": native "no". tools-make is configured
+# before libobjc2 exists, so the test program can't link and every variant
+# fails; config.make gets an empty objc_threaded. (verified)
+# Needs nextbsd/tools-make's cacheable check; the stock check ignores it and
+# assumes -pthread when cross-compiling.
+gs_cv_objc_threaded=
+
+# "for bash": native "no" (NextBSD has no bash), so gnustep-tests gets
+# #!/bin/sh. Without this a cross build would record the build host's bash.
+# (verified)
+ac_cv_path_SHELLPROG=
+# "for test": native /bin/test. (verified)
+ac_cv_path_TESTPROG=/bin/test
+# "for gawk/mawk/nawk": native nawk. (verified)
+ac_cv_prog_AWK=nawk
+
+# ---- libs-base: cache variables -----------------------------------------------
+
+# "loading of constructor functions": native yes; the cross default is no.
+# (verified: CON_AUTOLOAD 1)
+objc_cv_con_autoload=yes
+# "for gettid()": native no. (verified)
+ac_cv_gettid=no
+# "whether setpgrp requires zero arguments": native yes. (verified:
+# SETPGRP_VOID 1)
+ac_cv_func_setpgrp_void=yes
+
+# ---- libs-base: cross_* answers (its cross.config format) -------------------
+
+# "whether SO_REUSEADDR is broken": native no (1 = works). (verified)
+cross_reuseaddr_ok=1
+# "whether objc really works": native yes. (verified)
+cross_gs_cv_objc_works=yes
+# "if the compiler supports -fconstant-string-class": native yes. (verified)
+cross_gs_cv_objc_compiler_supports_constant_string_class=yes
+# "if +load method is executed before main": native yes. (verified:
+# HAVE_LOAD_METHOD 1)
+cross_gs_cv_objc_load_method_worked=yes
+# ObjC2 runtime (libobjc2): native OBJC2RUNTIME=1 in config.mak. (verified)
+cross_objc2_runtime=1
+# "for non-fragile-abi support": native yes. (verified)
+cross_non_fragile=yes
+# "for _objc_unexpected_exception in runtime": native yes. (verified:
+# HAVE_UNEXPECTED 1)
+cross_have_unexpected=yes
+# "for thread-safe +initialize in runtime": native yes. (verified:
+# HAVE_INITIALIZE 1)
+cross_safe_initialize=yes
+# "if poll supports devices": native yes. (verified: HAVE_POLL_F 1)
+cross_have_poll=yes
+# vsprintf/vasprintf return the length: native 1 and 1. (verified)
+cross_VSPRINTF_RETURNS_LENGTH=1
+cross_VASPRINTF_RETURNS_LENGTH=1
+# "short/int needs to be word aligned": native no. (verified)
+cross_NEED_WORD_ALIGNMENT=0
+# register_printf_function works, with wide characters: native 1 and 1
+# (FreeBSD libc's xprintf). (verified: HAVE_REGISTER_PRINTF_FUNCTION 1,
+# HAVE_WIDE_PRINTF_FUNCTION 1)
+cross_working_register_printf=1
+cross_wide_register_printf=1
+# "program_invocation_name in C Library": native no. (verified)
+cross_gs_cv_program_invocation_name_worked=no
+# "/proc/$$/cmdline terminated by nul": native no. (verified)
+cross_CMDLINE_TERMINATED=0
+# "if we can access kernel memory": native no. (verified)
+cross_have_kvm_env=0
+# "FFI library usage": native libffi. (verified: USE_LIBFFI 1)
+cross_ffi_ok=yes
+# iconv: native "yes, in libc". (verified: HAVE_ICONV 1)
+cross_found_iconv_libc=yes
+cross_found_iconv_liconv=no
+cross_found_iconv_lgiconv=no
+# Unused by libs-base's configure today; kept as in its cross.config.
+cross_utf8literal_ok=no

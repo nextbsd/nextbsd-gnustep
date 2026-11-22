@@ -1,0 +1,14 @@
+# The GNUstep core, from NextBSD's forks, in build order.
+# name           repository                                   ref
+#
+# ref is the branch build-gnustep.sh clones. The commit it got is recorded in
+# the artifact's BUILD-INFO. Branches other than the default carry
+# cross-build fixes that are open as pull requests on the fork; they go back
+# to the default branch once those are merged.
+tools-make      https://github.com/nextbsd/tools-make.git      master
+libobjc2        https://github.com/nextbsd/libobjc2.git        master
+libs-base       https://github.com/nextbsd/libs-base.git       master
+libs-corebase   https://github.com/nextbsd/libs-corebase.git   master
+libs-gui        https://github.com/nextbsd/libs-gui.git        master
+libs-back       https://github.com/nextbsd/libs-back.git       master
+libs-av         https://github.com/nextbsd/libs-av.git         main

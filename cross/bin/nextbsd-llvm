@@ -1,0 +1,6 @@
+#!/bin/sh
+# nextbsd-llvm: the SDK's ar, ranlib, nm, strip, objcopy, objdump and readelf.
+# Each is a link to this script and runs the toolchain image's LLVM tool of
+# that name, which handles both NextBSD targets.
+bindir=${NEXTBSD_CLANG_BINDIR:-${CROSS_BINDIR:-/usr/lib/llvm-19/bin}}
+exec "$bindir/llvm-${0##*/}" "$@"
