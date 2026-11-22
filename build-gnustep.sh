@@ -264,11 +264,13 @@ build_libs_base() {
     # As natively (-L/usr/lib/system finds libdns_sd, for Bonjour), with the
     # site file as the cross-compilation answers. --with-dispatch-include
     # isn't given: natively it adds -I/usr/include, which the compiler
-    # searches anyway.
+    # searches anyway. Nor is --with-dispatch-library: it adds
+    # -Wl,-rpath,/Developer/Link, a link-time-only folder. -L/Developer/Link
+    # in LDFLAGS finds libdispatch.so for the link, and the library records
+    # libsystem_dispatch.so, which the loader finds in /usr/lib/system.
     ./configure \
         --build="$BUILD_TRIPLE" --host="$GS_HOST" \
         --with-cross-compilation-info="$SITE" \
-        --with-dispatch-library=/Developer/Link \
         --with-zeroconf-api=mdns \
         LDFLAGS="-L/System/Library/Libraries -L/Developer/Link -L/usr/lib/system"
     keep_configs libs-base config.log config.mak base.make \
@@ -321,20 +323,14 @@ build_libs_av() {
 # files (makefiles, .pc, .cmake, scripts) name no build-host path.
 check_stage() {
     comp "checking $DESTDIR"
-    local readelf="$CROSS_BINDIR/llvm-readelf" want f dyn n d found bad=0 count=0 rpath_dev=
+    local readelf="$CROSS_BINDIR/llvm-readelf" want f dyn n d found bad=0 count=0
     case "$T" in amd64) want='X86-64' ;; arm64) want='AArch64' ;; esac
     while IFS= read -r -d '' f; do
         head -c 4 "$f" | grep -q 'ELF' || continue
         count=$((count + 1))
         "$readelf" -h "$f" | grep -q "Machine:.*$want" || { echo "  not $want: $f"; bad=1; continue; }
         dyn=$("$readelf" -d "$f" 2>/dev/null || true)
-        # libs-base records RUNPATH /Developer/Link (--with-dispatch-library
-        # adds -Wl,-rpath). A native build does the same; it is reported,
-        # not refused, until libs-base stops doing it.
-        if printf '%s\n' "$dyn" | grep -q 'RUNPATH.*\[/Developer/Link\]'; then
-            rpath_dev="$rpath_dev ${f#"$DESTDIR"}"
-        fi
-        if printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' | grep -vE '\[(/System|/usr|/Developer/Link)[^]]*\]$' | grep -q .; then
+        if printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' | grep -vE '\[(/System|/usr)[^]]*\]$' | grep -q .; then
             echo "  RPATH/RUNPATH outside /System and /usr: $f"
             printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)'
             bad=1
@@ -349,8 +345,6 @@ check_stage() {
         done
     done < <(find "$DESTDIR" -type f -print0)
     note "$count ELF files are $want"
-    [ -z "$rpath_dev" ] ||
-        note "RUNPATH /Developer/Link, as natively (libs-base --with-dispatch-library):$rpath_dev"
     if grep -rIl -e "$SYSROOT" -e "$BUILD" -e "$WRAP" "$DESTDIR" 2>/dev/null | grep -q .; then
         echo "  files naming a build-host path:"
         grep -rIn -e "$SYSROOT" -e "$BUILD" -e "$WRAP" "$DESTDIR" | cut -c1-300 | sed 's/^/    /'
