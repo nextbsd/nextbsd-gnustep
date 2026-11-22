@@ -5,7 +5,7 @@
 # the artifact's BUILD-INFO. Branches other than the default carry
 # cross-build fixes that are open as pull requests on the fork; they go back
 # to the default branch once those are merged.
-tools-make      https://github.com/nextbsd/tools-make.git      cross-compile
+tools-make      https://github.com/nextbsd/tools-make.git      master
 libobjc2        https://github.com/nextbsd/libobjc2.git        master
 libs-base       https://github.com/nextbsd/libs-base.git       master
 libs-corebase   https://github.com/nextbsd/libs-corebase.git   master
