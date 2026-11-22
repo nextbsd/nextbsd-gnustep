@@ -5,7 +5,8 @@ name: Build NextBSD GNUstep (cross)
 # and arm64 on the x86_64 runner, inside the per-arch nextbsd-toolchain
 # container, against a NextBSD sysroot made of the `continuous` artifacts of
 # nextbsd-freebsd-compat, nextbsd-userland, nextbsd-displayserver-support,
-# nextbsd-xlibs and nextbsd-gnustep-support. Nothing built for NextBSD runs
+# nextbsd-xlibs, nextbsd-gnustep-support, nextbsd-printing-support (CUPS, for
+# libs-gui's printing) and nextbsd-mesa (libGL, for libs-back's GLX). Nothing built for NextBSD runs
 # here: configure checks that would run a program are answered by
 # cross/nextbsd-<arch>.site (nextbsd/nextbsd#673).
 #
@@ -58,7 +59,9 @@ jobs:
           apt-get install -y --no-install-recommends gnustep-base-runtime
           command -v plmerge pl2link
 
-      # The NextBSD sysroot, in the order the repos build. All public reads.
+      # The NextBSD sysroot, in the order the repos build: what a NextBSD
+      # machine with NextBSD-everything has when it builds GNUstep natively.
+      # All public reads.
       - name: Stage the NextBSD sysroot
         env:
           GH_TOKEN: ${{ github.token }}
@@ -67,7 +70,9 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/sysroot" /tmp/dl
           for r in nextbsd-freebsd-compat:nextbsd-base nextbsd-userland:nextbsd-userland \
                    nextbsd-displayserver-support:nextbsd-displayserver-support \
-                   nextbsd-xlibs:nextbsd-xlibs nextbsd-gnustep-support:nextbsd-gnustep-support; do
+                   nextbsd-xlibs:nextbsd-xlibs nextbsd-gnustep-support:nextbsd-gnustep-support \
+                   nextbsd-printing-support:nextbsd-printing-support \
+                   nextbsd-mesa:nextbsd-mesa nextbsd-mesa:nextbsd-mesa-x11; do
             repo=${r%%:*}; asset=${r#*:}-$A.tar.gz
             gh release download continuous --repo "nextbsd/$repo" --pattern "$asset" --dir /tmp/dl --clobber
             tar -C "$GITHUB_WORKSPACE/sysroot" -xzf "/tmp/dl/$asset"
@@ -91,8 +96,12 @@ jobs:
           export SYSROOT="$GITHUB_WORKSPACE/sysroot"
           export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" CCACHE_MAXSIZE=2G
           ccache -z
-          ./build-gnustep.sh
+          rc=0; ./build-gnustep.sh || rc=$?
           ccache -s
+          # The report (times, configure output) is uploaded even on failure.
+          mkdir -p ".build/report-$T"
+          cp -R ".build/configs-$T" ".build/times-$T.tsv" ".build/BUILD-INFO-$T" /tmp/dl/SYSROOT-INFO ".build/report-$T/" 2>/dev/null || true
+          exit $rc
 
       - name: Assemble the GNUstep SDK
         env:
@@ -108,8 +117,6 @@ jobs:
         run: |
           cp .build/BUILD-INFO-$T /stage/System/Library/Preferences/nextbsd-gnustep-BUILD-INFO 2>/dev/null || true
           tar -C /stage -czf ".build/out/nextbsd-gnustep-$T.tar.gz" .
-          mkdir -p ".build/report-$T"
-          cp -R ".build/configs-$T" ".build/times-$T.tsv" ".build/BUILD-INFO-$T" /tmp/dl/SYSROOT-INFO ".build/report-$T/"
           ls -la .build/out
           {
             echo "### GNUstep cross-build, $T"

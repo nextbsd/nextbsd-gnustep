@@ -34,9 +34,10 @@
 # Environment (the CI workflow sets these):
 #   T             amd64 | arm64
 #   SYSROOT       the NextBSD sysroot: compat's base, then nextbsd-userland,
-#                 nextbsd-displayserver-support, nextbsd-xlibs and
-#                 nextbsd-gnustep-support extracted over it. Scratch: the
-#                 /Developer/Link links are made in it.
+#                 nextbsd-displayserver-support, nextbsd-xlibs,
+#                 nextbsd-gnustep-support, nextbsd-printing-support and
+#                 nextbsd-mesa (with mesa-x11) extracted over it. Scratch:
+#                 the /Developer/Link links are made in it.
 #   CROSS_BINDIR  the image's clang/lld (set by the nextbsd-toolchain image)
 #   DESTDIR       the staging root (default /stage)
 #   CCACHE        non-empty: compile through ccache
@@ -98,6 +99,10 @@ setup() {
         ln -sf "$CROSS_BINDIR/llvm-$t" "$WRAP/$t"
     done
     ln -sf "$(command -v make)" "$WRAP/gmake"
+    # libs-gui finds CUPS with cups-config, a shell script that prints the
+    # target's native flags (-I/usr/include -lcups ...); nextbsd-cc points
+    # them into the sysroot. Without it libs-gui builds no CUPS printing.
+    [ -f "$SYSROOT/usr/bin/cups-config" ] && ln -sf "$SYSROOT/usr/bin/cups-config" "$WRAP/cups-config"
 
     export NEXTBSD_SYSROOT="$SYSROOT" NEXTBSD_TARGET="$CLANG_TARGET"
     export NEXTBSD_CLANG_BINDIR="$CROSS_BINDIR" NEXTBSD_WRAPDIR="$WRAP" NEXTBSD_CPU="$CPU"
@@ -228,14 +233,18 @@ build_tools_make() {
 build_libobjc2() {
     fetch libobjc2
     # As natively, with the cross toolchain file. The blocks runtime is the
-    # base system's libsystem_blocks.
+    # base system's libsystem_blocks. M_LIBRARY=m: natively find_library(m)
+    # finds nothing and libm comes from clang's implicit libraries; in the
+    # sysroot it finds a path, which libobjc.pc would then print as
+    # "-l<path>" (libobjc2 appends it to Libs.private with -l).
     cmake -S "$S" -B "$S/Build" -G Ninja \
         -DCMAKE_TOOLCHAIN_FILE="$ROOT/cross/cmake/nextbsd.cmake" \
         -DGNUSTEP_INSTALL_TYPE=SYSTEM \
         -DCMAKE_BUILD_TYPE=Release \
         -DEMBEDDED_BLOCKS_RUNTIME=OFF \
         -DBlocksRuntime_INCLUDE_DIR="$SYSROOT/usr/include" \
-        -DBlocksRuntime_LIBRARIES="$SYSROOT/usr/lib/system/libsystem_blocks.so"
+        -DBlocksRuntime_LIBRARIES="$SYSROOT/usr/lib/system/libsystem_blocks.so" \
+        -DM_LIBRARY=m
     keep_configs libobjc2 Build/CMakeCache.txt Build/objc/objc-config.h
     cmake --build "$S/Build" -j "$JOBS"
     DESTDIR="$DESTDIR" cmake --install "$S/Build"
@@ -311,14 +320,20 @@ build_libs_av() {
 # files (makefiles, .pc, .cmake, scripts) name no build-host path.
 check_stage() {
     comp "checking $DESTDIR"
-    local readelf="$CROSS_BINDIR/llvm-readelf" want f dyn n d found bad=0 count=0
+    local readelf="$CROSS_BINDIR/llvm-readelf" want f dyn n d found bad=0 count=0 rpath_dev=
     case "$T" in amd64) want='X86-64' ;; arm64) want='AArch64' ;; esac
     while IFS= read -r -d '' f; do
         head -c 4 "$f" | grep -q 'ELF' || continue
         count=$((count + 1))
         "$readelf" -h "$f" | grep -q "Machine:.*$want" || { echo "  not $want: $f"; bad=1; continue; }
         dyn=$("$readelf" -d "$f" 2>/dev/null || true)
-        if printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' | grep -vE '\[(/System|/usr)[^]]*\]$' | grep -q .; then
+        # libs-base records RUNPATH /Developer/Link (--with-dispatch-library
+        # adds -Wl,-rpath). A native build does the same; it is reported,
+        # not refused, until libs-base stops doing it.
+        if printf '%s\n' "$dyn" | grep -q 'RUNPATH.*\[/Developer/Link\]'; then
+            rpath_dev="$rpath_dev ${f#"$DESTDIR"}"
+        fi
+        if printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)' | grep -vE '\[(/System|/usr|/Developer/Link)[^]]*\]$' | grep -q .; then
             echo "  RPATH/RUNPATH outside /System and /usr: $f"
             printf '%s\n' "$dyn" | grep -E '\((RPATH|RUNPATH)\)'
             bad=1
@@ -333,9 +348,11 @@ check_stage() {
         done
     done < <(find "$DESTDIR" -type f -print0)
     note "$count ELF files are $want"
+    [ -z "$rpath_dev" ] ||
+        note "RUNPATH /Developer/Link, as natively (libs-base --with-dispatch-library):$rpath_dev"
     if grep -rIl -e "$SYSROOT" -e "$BUILD" -e "$WRAP" "$DESTDIR" 2>/dev/null | grep -q .; then
         echo "  files naming a build-host path:"
-        grep -rIl -e "$SYSROOT" -e "$BUILD" -e "$WRAP" "$DESTDIR" | sed 's/^/    /'
+        grep -rIn -e "$SYSROOT" -e "$BUILD" -e "$WRAP" "$DESTDIR" | cut -c1-300 | sed 's/^/    /'
         bad=1
     fi
     [ "$bad" = 0 ] || fail "the staged GNUstep has problems (above)"
