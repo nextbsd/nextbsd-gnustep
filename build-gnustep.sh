@@ -233,7 +233,8 @@ build_tools_make() {
 build_libobjc2() {
     fetch libobjc2
     # As natively, with the cross toolchain file. The blocks runtime is the
-    # base system's libsystem_blocks. M_LIBRARY=m: natively find_library(m)
+    # base system's libsystem_blocks. M_LIBRARY (a STRING, so CMake keeps it
+    # a library name rather than a path) is m: natively find_library(m)
     # finds nothing and libm comes from clang's implicit libraries; in the
     # sysroot it finds a path, which libobjc.pc would then print as
     # "-l<path>" (libobjc2 appends it to Libs.private with -l).
@@ -244,7 +245,7 @@ build_libobjc2() {
         -DEMBEDDED_BLOCKS_RUNTIME=OFF \
         -DBlocksRuntime_INCLUDE_DIR="$SYSROOT/usr/include" \
         -DBlocksRuntime_LIBRARIES="$SYSROOT/usr/lib/system/libsystem_blocks.so" \
-        -DM_LIBRARY=m
+        -DM_LIBRARY:STRING=m
     keep_configs libobjc2 Build/CMakeCache.txt Build/objc/objc-config.h
     cmake --build "$S/Build" -j "$JOBS"
     DESTDIR="$DESTDIR" cmake --install "$S/Build"
