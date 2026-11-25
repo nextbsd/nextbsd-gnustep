@@ -37,7 +37,8 @@ on:
   pull_request:
     paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources-state.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
   schedule:
-    - cron: '*/30 * * * *'
+    # Off the hour and half hour, which GitHub drops when it is busy.
+    - cron: '7,37 * * * *'
   workflow_dispatch:
     inputs:
       fbsd_sha:
