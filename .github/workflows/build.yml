@@ -23,13 +23,21 @@ name: Build NextBSD GNUstep (cross)
 # Builds run on pull requests, pushes to main and by hand; a push to main or a
 # manual run from main also publishes the tarballs to the `continuous`
 # release. Nothing is dispatched to other repos.
+#
+# The forks in sources.lock don't tell this repo when they merge, so a
+# schedule polls them: every 30 minutes `changes` compares sources-state.sh's
+# list (each sources.lock ref's tip) with the SOURCES asset of the last
+# publish, and builds and publishes only when something moved. nextbsd-desktop
+# polls the SDK the same way, so a libs-gui merge reaches the desktop too.
 
 on:
   push:
     branches: [main]
-    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
+    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources-state.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
   pull_request:
-    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
+    paths: ['build-gnustep.sh', 'make-sdk.sh', 'test-sdk-app.sh', 'sources-state.sh', 'sources.lock', 'cross/**', 'sdk/**', '.github/workflows/build.yml']
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
       fbsd_sha:
@@ -37,9 +45,71 @@ on:
         required: false
         default: ''
 
+# One run per PR: a new push cancels the PR's previous run. Runs on main
+# publish `continuous`, so they queue instead of being cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # What this build is made from, and whether a scheduled run has anything to
+  # do: it builds when SOURCES differs from the last publish's and these
+  # sources haven't been tried before (the cache remembers each attempt, so a
+  # broken fork builds once, not every 30 minutes). Every other event builds.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.compare.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: state
+        run: |
+          mkdir -p .build/published
+          ./sources-state.sh > .build/SOURCES
+          cat .build/SOURCES
+          echo "hash=$(sha256sum .build/SOURCES | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - id: tried
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .build/SOURCES
+          key: gnustep-tried-${{ steps.state.outputs.hash }}
+          lookup-only: true
+      - id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TRIED: ${{ steps.tried.outputs.cache-hit }}
+        run: |
+          build=true
+          if [ "$EVENT" = schedule ]; then
+            if gh release download continuous --repo "$GITHUB_REPOSITORY" --pattern SOURCES \
+                   --dir .build/published 2>/dev/null &&
+               cmp -s .build/SOURCES .build/published/SOURCES; then
+              build=false
+              echo "Nothing moved since the last publish."
+            elif [ "$TRIED" = true ]; then
+              build=false
+              echo "These sources were already built once and didn't publish; not retrying."
+            else
+              diff .build/published/SOURCES .build/SOURCES || true
+            fi
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+      - if: github.event_name == 'schedule' && steps.compare.outputs.build == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .build/SOURCES
+          key: gnustep-tried-${{ steps.state.outputs.hash }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnustep-sources
+          path: .build/SOURCES
+
   build:
     name: gnustep (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -186,7 +256,7 @@ jobs:
 
   publish:
     needs: [build, sdk-app]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -195,10 +265,15 @@ jobs:
         with:
           path: artifacts
           pattern: nextbsd-gnustep-*
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          name: gnustep-sources
       - name: Gather artifacts
         run: |
           mkdir -p out
           find artifacts -name 'nextbsd-gnustep-*.tar.gz' -exec cp {} out/ \;
+          cp artifacts/SOURCES out/
           ls -la out/
       - name: Publish to continuous release
         uses: softprops/action-gh-release@v2
@@ -207,4 +282,6 @@ jobs:
           name: Continuous GNUstep build
           prerelease: true
           fail_on_unmatched_files: true
-          files: out/*.tar.gz
+          files: |
+            out/*.tar.gz
+            out/SOURCES
